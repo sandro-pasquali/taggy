@@ -1,0 +1,12 @@
+*.log
+pids
+*.pid
+*.seed
+node_modules
+.idea
+.DS_STORE
+
+# node-waf configuration
+#
+.lock-wscript
+

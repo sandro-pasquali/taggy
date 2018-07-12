@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title></title>
+    <link href="libs/select2.min.css" rel="stylesheet" />
+    <script src="libs/jquery.min.js"></script>
+    <script src="libs/select2.full.min.js"></script>
+</head>
+<body>
+
+<p>
+    The tag set for this demo contains the names of all US states, with their two-character abbreviations. There is some light mixing so that multiple ids are tagged with multiple states.
+</p>
+<p>
+    Type, and autocompletion should work. Using 'OR' will get you the most results. Try filtering them with 'NOT'.
+</p>
+
+<p>
+    AND <select id="groupAnd" style="width: 200px;" multiple="multiple"></select>
+</p>
+<p>
+    OR <select id="groupOr" style="width: 200px;" multiple="multiple"></select>
+</p>
+<p>
+    NOT <select id="groupNot" style="width: 200px;" multiple="multiple"></select>
+</p>
+    <button id="search" type="button">Search</button>
+
+<div id="search-output"></div>
+
+
+<script type="text/javascript">
+
+(function() {
+
+    // Basic incrementing id used by Select2 for tag element ids.
+    //
+    var id = 1;
+
+    // Tracks what is currently in the select box. See below.
+    //
+    var current = {
+        and : [],
+        or : [],
+        not : []
+    };
+
+    var so = $('#search-output');
+
+    $("#groupAnd").select2(factory('and'))
+    .on('select2:select', function(ev) {
+        current.and.push(ev.params.data.text);
+    })
+    .on('select2:unselect', function(ev) {
+        var i = current.and.indexOf(ev.params.data.text);
+        i !== -1 && current.and.splice(i, 1);
+    })
+
+    $("#groupOr").select2(factory('or'))
+    .on('select2:select', function(ev) {
+        current.or.push(ev.params.data.text);
+    })
+    .on('select2:unselect', function(ev) {
+        var i = current.or.indexOf(ev.params.data.text);
+        i !== -1 && current.or.splice(i, 1);
+    })
+
+    $("#groupNot").select2(factory('not'))
+    .on('select2:select', function(ev) {
+        current.not.push(ev.params.data.text);
+    })
+    .on('select2:unselect', function(ev) {
+        var i = current.not.indexOf(ev.params.data.text);
+        i !== -1 && current.not.splice(i, 1);
+    })
+
+    // Search action
+    //
+    $('#search').on('click', function(e) {
+        $.ajax({
+            method: 'post',
+            url: '/search',
+            data: {
+                tags: JSON.stringify({
+                    and : current.and,
+                    or : current.or,
+                    not : current.not
+                })
+            }
+        })
+        .done(function(res, status) {
+
+            if(status === 'nocontent') {
+                return so.text('No tags sent or other error');
+            }
+
+            if(res.length === 0) {
+                return so.text('No results. Try expanding your search');
+            }
+
+            var i = 0;
+            var list = $('<ol>');
+
+            for(; i < res.length; i++) {
+                list.append('<li>' + res[i] + '</li>');
+            }
+
+            so.html(list);
+        })
+        .fail(function(err) {
+            so.text(err);
+        })
+    });
+
+    function factory(op) {
+        return {
+            tags: true,
+            tokenSeparators: [','],
+            maximumSelectionLength: 5,
+            minimumResultsForSearch: Infinity,
+            ajax: {
+                url: "/autocomplete",
+                        dataType: 'json',
+                        multiple: true,
+                        delay: 250,
+                        processResults: function(data, params) {
+
+                    let i = 0;
+                    let results = [];
+                    for(; i < data.length; i++) {
+
+                        // Don't return items in #current list
+                        //
+                        if(!~current[op].indexOf(data[i])) {
+                            results.push({
+                                id: '_' + id++,
+                                text: data[i]
+                            })
+                        }
+                    }
+
+                    return {
+                        results: results
+                    };
+                },
+                error: function(data) {
+                    console.log("ERRR", data)
+                },
+                cache: true
+            },
+            language: {
+                inputTooShort: function () { return ''; }
+            },
+            escapeMarkup: function(markup) {
+                return markup;
+            },
+            minimumInputLength: 2,
+            templateResult: function(tag) {
+                return tag.text;
+            },
+            templateSelection: function(tag) {
+                return tag.text;
+            }
+        }
+    }
+})()
+
+</script>
+
+</body>
+</html>

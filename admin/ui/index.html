@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title></title>
+
+    <link href="libs/jsoneditor.css" rel="stylesheet" />
+    <link href="libs/select2.min.css" rel="stylesheet" />
+
+    <style type="text/css">
+
+        body {
+            font-family: helvetica;
+        }
+
+        #jsoneditor {
+            height: 500px;
+            width: 100%;
+        }
+
+        button {
+            height: 30px;
+            padding: 6px;
+            font-size: 16px;
+            font-weight: bold;
+            border: 1px solid black;
+            text-align: center;
+            background-color: white;
+            color: black;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: palegreen;
+        }
+    </style>
+
+    <script src="libs/jquery.min.js"></script>
+    <script src="libs/select2.full.min.js"></script>
+    <script src="libs/jsoneditor.js"></script>
+    <script src="libs/jsondiffpatch.js"></script>
+    <script src="libs/notify.js"></script>
+</head>
+<body>
+
+<table>
+    <tr>
+        <td>AND <select id="groupAnd" style="width: 200px;" multiple="multiple"></select></td>
+        <td>OR <select id="groupOr" style="width: 200px;" multiple="multiple"></select></td>
+        <td>NOT <select id="groupNot" style="width: 200px;" multiple="multiple"></select></td>
+        <td><button id="search" type="button">Search</button></td>
+    </tr>
+</table>
+
+<button id="all-tags">Tags</button><button id="all-items-tags">Items</button><button id="update">Update</button>
+
+<div id="jsoneditor"></div>
+
+
+<script type="text/javascript">
+
+(function() {
+
+    // Basic incrementing id used by Select2 for tag element ids.
+    //
+    var id = 1;
+
+    // Tracks what is currently in the select box. See below.
+    //
+    var current = {
+        and : [],
+        or : [],
+        not : []
+    };
+
+    var lastEditorJSON;
+
+    // A ref to the last control (button) clicked (such as "search"). Used
+    // below to refresh editor once "update" fired, etc.
+    //
+    var $lastEditorButton;
+
+    var editor = new JSONEditor(document.getElementById('jsoneditor'), {
+        mode : 'form'
+    });
+
+    $('#all-items-tags').click(function() {
+
+        $.ajax({
+            method: 'get',
+            url: '/itemized',
+            data: {}
+        })
+        .done(function(res, status) {
+
+            res = res.reduce(function(acc, grp) {
+
+                acc[grp[1]] = grp[0].sort();
+                return acc;
+
+            }, {});
+
+            updateEditor(res, '#all-items-tags');
+        })
+        .fail(function(err) {
+            $.notify(err.responseText || 'Unspecified error', 'error');
+        })
+
+    });
+
+    $('#update').click(function() {
+
+        // Get current JSON, if any diffs (ie. edits) verify those and update if needed.
+        //
+        var currJSON = editor.get();
+
+        var diff = jsondiffpatch.diff(lastEditorJSON, currJSON);
+
+        // No changes...
+        //
+        if(!diff || !lastEditorJSON) {
+            return $.notify('No changes');
+        }
+
+        // Determining changes depends on the structure of the diff.
+        // Tags -> an Object, keys being order indexes (0...n).
+        // Each value = { o: ['originalTag', 'changed'], s: ['stemmedTagOrig', 'changed'] }
+        // So if we get a list of tags, and change tag 34 from o:'hello' to 'goodbye' we get:
+        // { 34: { o : ['hello', 'goodbye'] } }
+        // (If stem is changed, replace 'o:' with 's:'. Of course if both are changed, both
+        // changes are present).
+        //
+        // Items -> an Object, keys being itemIds.
+        // Each value = Object, one key indicating which tag in associated collection was
+        // changed, and another underscore(_) prefixed key containing the change.
+        // So, if original is { 123 : ['foo', 'bar', 'baz' } and we change 'bar' to 'boom'
+        // and 'baz' to 'bang' we get:
+        // { 123 : { 1: 'bar', _1: 'boom', 2: 'baz', _2: 'bang' } }
+        //
+        //
+        var changeset = [];
+
+        Object.keys(diff).forEach(function(itemId) {
+
+            // This is a control value set by jsondiffpatch. ignore.
+            //
+            if(itemId === '_t') {
+                return;
+            }
+
+            var obj = diff[itemId];
+            var iPairs = {};
+
+            // Tag changes
+            // Note: we are only interested in #o changes. Warn if #s is being changed
+            //
+            if(obj.o || obj.s) {
+                if(obj.s) {
+                    $.notify("You've made changes to stem > " + obj.s[0] + ". Stem changes are ignored. Changes only need to be made to original tags.", "error");
+                }
+                if(!obj.o) {
+                    return;
+                }
+
+                // [orig, changed]
+                //
+                return changeset.push([ obj.o[0], obj.o[1] ]);
+            }
+
+            // Item-tag changes
+            //
+            Object.keys(obj).forEach(function(idx) {
+
+                // This is a control value set by jsondiffpatch. ignore.
+                //
+                if(idx === '_t') {
+                    return;
+                }
+
+                // Always a numeric representation of idx, even if '_' prefixed
+                //
+                var cidx = +('' + idx).match(/\d+/)[0];
+                var val = obj[idx][0];
+
+                iPairs[cidx] = iPairs[cidx] || [];
+
+                if(~idx.indexOf('_')) {
+                    iPairs[cidx][0] = val;
+                } else {
+                    iPairs[cidx][1] = val;
+                }
+            });
+
+            // Note that #idx here is the index of the tag within the array associated with #itemId
+            //
+            //
+            Object.keys(iPairs).forEach(function(idx) {
+                changeset.push([itemId, iPairs[idx]]);
+            });
+        });
+
+        if(changeset.length) {
+            $.ajax({
+                method: 'post',
+                url: '/updatetags',
+                data: {
+                    data: JSON.stringify(changeset)
+                }
+            })
+            .done(function(res, status) {
+
+                // Assume all worked and notify of changes
+                //
+                changeset.forEach(function(it) {
+
+                    var pair = it;
+                    var suff = '';
+
+                    // Change was to an item group; otherwise, straight tag change.
+                    //
+                    if(typeof it[1] === 'object') {
+                        pair = it[1];
+                        suff = ' for itemId: ' + it[0];
+                    }
+
+                    if(pair[1] === '') {
+                        $.notify('Deleted `' + pair[0] + '`' + suff, 'success');
+                    } else {
+                        $.notify('Changed `' + pair[0] + '` to `' + pair[1] + '`' + suff, 'success');
+                    }
+                });
+
+                // Update the last action (get the most recent tag snapshot for given action)
+                //
+                $lastEditorButton.click();
+            })
+            .fail(function(err) {
+                $.notify(err.responseText, 'error');
+            })
+            .always(function() {
+                editor.set({});
+                lastEditorJSON = undefined;
+            })
+        }
+    });
+
+    $("#all-tags").click(function(e) {
+        $.ajax({
+            method: 'get',
+            url: '/all',
+            data: {}
+        })
+        .done(function(res, status) {
+            updateEditor(res, '#all-tags');
+        })
+        .fail(function(err) {
+            $.notify(err.responseText, 'error');
+        })
+    })
+
+    $("#groupAnd").select2(factory('and'))
+    .on('select2:select', function(ev) {
+        current.and.push(ev.params.data.text);
+    })
+    .on('select2:unselect', function(ev) {
+        var i = current.and.indexOf(ev.params.data.text);
+        i !== -1 && current.and.splice(i, 1);
+    })
+
+    $("#groupOr").select2(factory('or'))
+    .on('select2:select', function(ev) {
+        current.or.push(ev.params.data.text);
+    })
+    .on('select2:unselect', function(ev) {
+        var i = current.or.indexOf(ev.params.data.text);
+        i !== -1 && current.or.splice(i, 1);
+    })
+
+    $("#groupNot").select2(factory('not'))
+    .on('select2:select', function(ev) {
+        current.not.push(ev.params.data.text);
+    })
+    .on('select2:unselect', function(ev) {
+        var i = current.not.indexOf(ev.params.data.text);
+        i !== -1 && current.not.splice(i, 1);
+    })
+
+    // Search action
+    //
+    $('#search').on('click', function(e) {
+        $.ajax({
+            method: 'post',
+            url: '/search',
+            data: {
+                tags: JSON.stringify({
+                    and : current.and,
+                    or : current.or,
+                    not : current.not
+                })
+            }
+        })
+        .done(function(res, status, jqxhr) {
+
+            if(status === 'nocontent') {
+                return $.notify('No tags sent or other error', 'error');
+            }
+
+            if(res.length === 0) {
+                return $.notify('No results. Try expanding your search', 'warn');
+            }
+
+            updateEditor(res, '#search');
+        })
+        .fail(function(err) {
+            $.notify(err.responseText, 'error');
+        })
+    });
+
+    function updateEditor(data, targ) {
+
+        lastEditorJSON = data;
+        $lastEditorButton = $(targ);
+
+        editor.set(data);
+    }
+
+    function factory(op) {
+        return {
+            tags: true,
+            tokenSeparators: [','],
+            maximumSelectionLength: 5,
+            minimumResultsForSearch: Infinity,
+            ajax: {
+                url: "/autocomplete",
+                        dataType: 'json',
+                        multiple: true,
+                        delay: 250,
+                        processResults: function(data, params) {
+
+                    let i = 0;
+                    let results = [];
+                    for(; i < data.length; i++) {
+
+                        // Don't return items in #current list
+                        //
+                        if(!~current[op].indexOf(data[i])) {
+                            results.push({
+                                id: '_' + id++,
+                                text: data[i]
+                            })
+                        }
+                    }
+
+                    return {
+                        results: results
+                    };
+                },
+                error: function(data) {
+                    console.log("ERRR", data)
+                },
+                cache: true
+            },
+            language: {
+                inputTooShort: function () { return ''; }
+            },
+            escapeMarkup: function(markup) {
+                return markup;
+            },
+            minimumInputLength: 2,
+            templateResult: function(tag) {
+                return tag.text;
+            },
+            templateSelection: function(tag) {
+                return tag.text;
+            }
+        }
+    }
+})()
+
+</script>
+
+</body>
+</html>
