@@ -322,7 +322,7 @@ To completely remove a tag from an item simply erase it (delete all its characte
 
 ## Examples
 
-The testing suite should demonstrate all useful functionality. 
+The testing suite demonstrates all useful functionality. 
 
 An example of how to use the `select2` jQuery plugin for doing autocomplete/search against an `Express` server can be found in the `examples/select2` folder:
 ```
