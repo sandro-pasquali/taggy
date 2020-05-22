@@ -55,7 +55,8 @@ module.exports = function(test, Promise) {
         return taggy
         .deflate()
         .then(ser => {
-            test.looseEqual(ser, `[[["aa","bb","ccc"],"testupdate"],[["_$$__0","_$$__2","_$$__3","_$$__4","latviesu valoda","Latvian","$$latitudes","latitudinal"],"_ID_2$"],[["_$$__2","_$$__4","New York-based","wwvc2016"],"_ID_4$"]]`, 'Correctly #deflating');
+
+            test.looseEqual(ser, `[[["aa","bb","ccc"],"testupdate"],[["_$$__2","_$$__4","New York-based","wwvc2016"],"_ID_4$"],[["_$$__0","_$$__2","_$$__3","_$$__4","latviesu valoda","Latvian","$$latitudes","latitudinal"],"_ID_2$"]]`, 'Correctly #deflating');
 
             return taggy.inflate(ser).then(res => {
                 test.looseEqual(res, [false, false, false], 'Correctly #inflating');
